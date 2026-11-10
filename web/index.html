@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AskAll — ask once, every model answers</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #0b0e14; color: #e6e9ef; }
+  header { padding: 28px 20px 8px; text-align: center; }
+  h1 { margin: 0; font-size: 34px; letter-spacing: .5px; }
+  h1 span { color: #ffb86b; }
+  .tag { color: #9aa4b2; margin-top: 6px; }
+  main { max-width: 1060px; margin: 0 auto; padding: 16px 20px 48px; }
+  .modes { display: flex; gap: 8px; justify-content: center; margin: 14px 0; }
+  .modes button { background: #171c26; color: #e6e9ef; border: 1px solid #2a3140; padding: 9px 18px;
+                  border-radius: 999px; cursor: pointer; font-size: 15px; }
+  .modes button.active { background: #ffb86b; color: #14100a; border-color: #ffb86b; font-weight: 600; }
+  .askrow { display: flex; gap: 10px; }
+  textarea { flex: 1; background: #11151d; border: 1px solid #2a3140; color: #e6e9ef; border-radius: 12px;
+             padding: 12px 14px; font-size: 16px; min-height: 54px; resize: vertical; }
+  #go { background: #ffb86b; color: #14100a; border: 0; border-radius: 12px; padding: 0 26px;
+        font-size: 16px; font-weight: 700; cursor: pointer; }
+  #go:disabled { opacity: .5; cursor: wait; }
+  .hint { color: #77808f; font-size: 13px; text-align: center; margin-top: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 22px; }
+  .card { background: #11151d; border: 1px solid #242b38; border-radius: 14px; padding: 16px; }
+  .card h3 { margin: 0 0 4px; font-size: 15px; color: #ffb86b; word-break: break-all; }
+  .meta { color: #77808f; font-size: 12.5px; margin-bottom: 10px; }
+  .card .body { white-space: pre-wrap; line-height: 1.5; font-size: 14.5px; }
+  .card.judge { border-color: #ffb86b; grid-column: 1 / -1; }
+  .card.judge h3 { color: #ffd9a0; }
+  .tools { color: #8fd0a8; font-size: 12.5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word; }
+  .error { color: #ff8a8a; text-align: center; margin-top: 18px; white-space: pre-wrap; }
+  footer { color: #5b6370; text-align: center; font-size: 12.5px; padding-bottom: 26px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ask<span>All</span></h1>
+  <div class="tag">Ask once. Every model answers. One question, many providers, a single
+    <strong>Otari</strong> gateway key.</div>
+</header>
+<main>
+  <div class="modes">
+    <button data-mode="panel" class="active">Panel — compare models</button>
+    <button data-mode="research">Research — web search</button>
+    <button data-mode="calc">Calc — code execution</button>
+  </div>
+  <div class="askrow">
+    <textarea id="q" placeholder="Ask anything…">Why is the sky blue?</textarea>
+    <button id="go">Ask</button>
+  </div>
+  <div class="hint" id="hint">Panel sends your question to models from different providers through Otari and adds a judge summary.</div>
+  <div class="error" id="error"></div>
+  <div class="grid" id="results"></div>
+</main>
+<footer>Powered by Otari (Mozilla AI) — https://api.otari.ai · Built for Devs Wilding Online</footer>
+<script>
+  let mode = "panel";
+  const hints = {
+    panel: "Panel sends your question to models from different providers through Otari and adds a judge summary.",
+    research: "Research answers with Otari's server-side web search tool — the gateway searches, the model cites.",
+    calc: "Calc answers with Otari's server-side code execution — the gateway runs real Python, the model explains."
+  };
+  document.querySelectorAll(".modes button").forEach(b => b.onclick = () => {
+    document.querySelectorAll(".modes button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active"); mode = b.dataset.mode;
+    document.getElementById("hint").textContent = hints[mode];
+  });
+  const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  function card(r, judge) {
+    const u = r.usage || {};
+    const meta = `tokens: ${u.prompt_tokens ?? "?"} in / ${u.completion_tokens ?? "?"} out · ${r.latency_s}s · via Otari`;
+    const tools = (r.tool_calls && r.tool_calls.length)
+      ? `<div class="tools">Otari tool calls: ${esc(JSON.stringify(r.tool_calls).slice(0, 800))}</div>` : "";
+    return `<div class="card${judge ? " judge" : ""}"><h3>${esc(judge ? "Judge — " : "")}${esc(r.model)}</h3>
+      <div class="meta">${esc(meta)}</div><div class="body">${esc(r.content)}</div>${tools}</div>`;
+  }
+  document.getElementById("go").onclick = async () => {
+    const q = document.getElementById("q").value.trim();
+    const err = document.getElementById("error"), grid = document.getElementById("results"), go = document.getElementById("go");
+    err.textContent = ""; grid.innerHTML = ""; if (!q) return;
+    go.disabled = true; go.textContent = "Asking…";
+    try {
+      const res = await fetch("/api/" + mode, { method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ question: q, count: 3 }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      if (mode === "panel") {
+        grid.innerHTML = data.results.map(r => card(r, false)).join("") + (data.verdict ? card(data.verdict, true) : "");
+      } else {
+        grid.innerHTML = card(data.result, false);
+      }
+    } catch (e) { err.textContent = String(e.message || e); }
+    go.disabled = false; go.textContent = "Ask";
+  };
+</script>
+</body>
+</html>
